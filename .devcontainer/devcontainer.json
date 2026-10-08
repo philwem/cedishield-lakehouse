@@ -1,0 +1,32 @@
+{
+  "name": "CediShield Lakehouse Dev Container",
+  "build": {
+    "dockerfile": "../Dockerfile"
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff"
+        },
+        "[sql]": {
+          "editor.defaultFormatter": "dbt-power-user.vscode-dbt-power-user"
+        }
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "innoverio.vscode-dbt-power-user",
+        "mtxr.sqltools",
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml",
+        "bierner.markdown-preview-github-styles"
+      ]
+    }
+  },
+  "postCreateCommand": "pip install --upgrade pip && pip install -r requirements.txt",
+  "remoteUser": "root"
+}
