@@ -1,7 +1,10 @@
+import argparse
 import os
+import time
+from datetime import date
+
 import requests
 import pandas as pd
-import yfinance as yf
 from dotenv import load_dotenv
 
 
@@ -103,75 +106,141 @@ MARKET_PRICE_COLUMNS = [
     "volume",
 ]
 
+MARKET_REQUEST_DELAY_SECONDS = 12
+
 
 def fetch_market_prices(
     tickers: list[str], start_date: str = "2020-01-01"
 ) -> pd.DataFrame:
-    """Fetch daily OHLCV data and return one row per ticker and market date."""
+    """Fetch Alpha Vantage daily OHLCV data into a normalized DataFrame."""
+    api_key = os.getenv("ALPHA_VANTAGE_API_KEY", "").strip()
+    if not api_key:
+        raise ValueError("ALPHA_VANTAGE_API_KEY must be set in the environment.")
+
     if not tickers or any(not ticker.strip() for ticker in tickers):
         raise ValueError("At least one non-empty ticker symbol is required.")
+    tickers = [ticker.strip() for ticker in tickers]
+    try:
+        date.fromisoformat(start_date)
+    except ValueError as exc:
+        raise ValueError("start_date must use YYYY-MM-DD format.") from exc
 
-    print(f"Fetching market data for tickers: {tickers}...")
-    df = yf.download(tickers, start=start_date, group_by="ticker", auto_adjust=True)
-    if df.empty:
-        print("No market observations returned.")
-        return pd.DataFrame(columns=MARKET_PRICE_COLUMNS)
-
+    print(f"Fetching market data from Alpha Vantage for tickers: {tickers}...")
     rows = []
-    for ticker in tickers:
-        if isinstance(df.columns, pd.MultiIndex):
-            matching_levels = [
-                level
-                for level in range(df.columns.nlevels)
-                if ticker in df.columns.get_level_values(level)
-            ]
-            if not matching_levels:
-                continue
-            ticker_df = df.xs(ticker, axis=1, level=matching_levels[0])
-        elif len(tickers) == 1:
-            ticker_df = df
-        else:
-            raise ValueError(
-                "Expected yfinance to return grouped columns for multiple tickers."
-            )
+    for ticker_index, ticker in enumerate(tickers):
+        if ticker_index:
+            time.sleep(MARKET_REQUEST_DELAY_SECONDS)
 
-        for date, row in ticker_df.iterrows():
+        try:
+            response = requests.get(
+                "https://www.alphavantage.co/query",
+                params={
+                    "function": "TIME_SERIES_DAILY",
+                    "symbol": ticker,
+                    "outputsize": "compact",
+                    "apikey": api_key,
+                },
+                timeout=30,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except (requests.exceptions.RequestException, ValueError) as exc:
+            print(
+                f"ERROR: Alpha Vantage request failed for {ticker}: {exc}"
+            )
+            continue
+
+        if not isinstance(data, dict):
+            print(f"ERROR: Alpha Vantage returned an invalid response for {ticker}.")
+            continue
+
+        api_issue = (
+            data.get("Error Message")
+            or data.get("Note")
+            or data.get("Information")
+        )
+        if api_issue:
+            print(f"WARNING: Alpha Vantage reported an issue for {ticker}: {api_issue}")
+            continue
+
+        time_series = data.get("Time Series (Daily)", {})
+        if not isinstance(time_series, dict) or not time_series:
+            print(
+                f"WARNING: Alpha Vantage returned no daily time series for {ticker}."
+            )
+            continue
+
+        for market_date, metrics in time_series.items():
+            if market_date < start_date:
+                continue
             rows.append(
                 {
-                    "market_date": date.strftime("%Y-%m-%d"),
+                    "market_date": market_date,
                     "ticker": ticker,
-                    "open_price": row.get("Open"),
-                    "high_price": row.get("High"),
-                    "low_price": row.get("Low"),
-                    "close_price": row.get("Close"),
-                    "volume": row.get("Volume"),
+                    "open_price": metrics.get("1. open"),
+                    "high_price": metrics.get("2. high"),
+                    "low_price": metrics.get("3. low"),
+                    "close_price": metrics.get("4. close"),
+                    "volume": metrics.get("5. volume"),
                 }
             )
 
     market_df = pd.DataFrame(rows, columns=MARKET_PRICE_COLUMNS)
+    for column in (
+        "open_price",
+        "high_price",
+        "low_price",
+        "close_price",
+        "volume",
+    ):
+        market_df[column] = pd.to_numeric(market_df[column], errors="coerce")
+
     market_df = market_df.dropna(subset=["close_price"])
 
-    print(f"Successfully fetched {len(market_df):,} market observation records.")
+    if market_df.empty:
+        print(
+            "WARNING: No usable Alpha Vantage market observations were returned."
+        )
+        return market_df
+
+    market_df = market_df.sort_values(
+        ["ticker", "market_date"]
+    ).reset_index(drop=True)
+    print(
+        f"Successfully fetched {len(market_df):,} market observation records "
+        "from Alpha Vantage."
+    )
     return market_df
 
 
 if __name__ == "__main__":
-    # Test the function with Newmont Corporation's CIK
-    df_sec = fetch_sec_facts("0001164727")
+    parser = argparse.ArgumentParser(description="Fetch CediShield source data.")
+    parser.add_argument(
+        "--source",
+        choices=("market", "sec", "both"),
+        default="market",
+        help="Data source to fetch (default: market).",
+    )
+    args = parser.parse_args()
 
-    print("\n--- DATA FRAME SAMPLE ---")
-    print(df_sec.head(5))
+    if args.source in ("market", "both"):
+        # The standard daily endpoint is for equity symbols, not Yahoo futures symbols.
+        test_tickers = ["NEM"]
+        df_market = fetch_market_prices(test_tickers)
+        print("\n--- MARKET PRICE SAMPLE ---")
+        print(df_market.head())
 
-    print("\n--- UNIQUE FINANCIAL CONCEPTS FOUND ---")
-    if df_sec.empty:
-        print("No 10-K or 10-Q US-GAAP facts found.")
-    else:
-        print(df_sec["concept"].unique()[:10])
+    if args.source in ("sec", "both"):
+        df_sec = fetch_sec_facts("0001164727")
 
-    print("\n--- SUMMARY STATS ---")
-    print(f"Total rows extracted: {len(df_sec):,}")
+        print("\n--- SEC DATA FRAME SAMPLE ---")
+        print(df_sec.head(5))
 
-    # Test with Newmont stock and Gold futures
-    test_tickers = ["NEM", "GC=F"]
-    df_market = fetch_market_prices(test_tickers)
-    print(df_market.head())
+        print("\n--- UNIQUE FINANCIAL CONCEPTS FOUND ---")
+        if df_sec.empty:
+            print("No 10-K or 10-Q US-GAAP facts found.")
+        else:
+            print(df_sec["concept"].unique()[:10])
+
+        print("\n--- SEC SUMMARY STATS ---")
+        print(f"Total rows extracted: {len(df_sec):,}")

@@ -21,7 +21,7 @@ Mining companies operate in a complex environment shaped by:
 CediShield aims to bring these signals together into a data foundation for operational and financial analysis. The current implementation starts with SEC EDGAR facts for Newmont; this is an initial reference case, not a permanent limit on the companies, sources, or use cases the project may support.
 
 ## Current scope
-The repository is at an early stage. The SEC ingestion script is implemented; market and macroeconomic sources and the dbt transformation layer are part of the intended direction and may be refined as the project evolves.
+The repository is at an early stage. SEC facts and Alpha Vantage daily equity prices can be fetched into pandas DataFrames. Macro data integration and the dbt transformation layer remain future work and may be refined as the project evolves.
 
 ### Data sources
 1. SEC EDGAR API
@@ -29,9 +29,12 @@ The repository is at an early stage. The SEC ingestion script is implemented; ma
    - Filters to major reporting forms such as 10-K and 10-Q
    - Flattens line-item facts into tabular records for analytics
 
-2. Yahoo Finance
-   - A potential source for market pricing and commodity benchmarks
-   - Intended examples include gold and FX signals; integration is not yet implemented
+2. Alpha Vantage
+   - Fetches daily equity prices using the standard `TIME_SERIES_DAILY` endpoint
+   - Uses raw (unadjusted) open, high, low, close, and volume values
+   - The free `compact` response contains only the latest 100 daily observations; retrieving full history requires a Premium key
+   - Requests are made sequentially with a 12-second pause between tickers; API errors and rate limits are reported without automatic retries
+   - The standard daily endpoint is for equity symbols, not Yahoo-style futures symbols such as `GC=F`
 
 3. World Bank API
    - A potential source of macroeconomic context such as GDP, inflation, and interest rate trends; integration is not yet implemented
@@ -77,6 +80,8 @@ The core ingestion script in [scripts/ingest_lakehouse.py](scripts/ingest_lakeho
 
 This is the first stage of the lakehouse pipeline and provides the input layer for dbt transformations and downstream analytical marts.
 
+The same script also includes `fetch_market_prices`, which retrieves daily OHLCV equity observations from Alpha Vantage and returns them as a pandas DataFrame. Set `ALPHA_VANTAGE_API_KEY` in your local `.env` file or environment before running market ingestion.
+
 ## Intended data flow
 1. Source APIs fetch raw financial, market, and macro data.
 2. Python scripts normalize and flatten the payloads.
@@ -84,7 +89,7 @@ This is the first stage of the lakehouse pipeline and provides the input layer f
 4. dbt models structure staging and analytic layers.
 5. Analysts query curated models for operational and macro-financial insight.
 
-This describes the target direction, not a fully working end-to-end pipeline today. At present, the SEC ingestion script returns a pandas DataFrame; it does not yet write its results to DuckDB or run dbt models.
+This describes the target direction, not a fully working end-to-end pipeline today. At present, SEC facts and Alpha Vantage equity prices are returned as pandas DataFrames; the script does not yet write results to DuckDB or run dbt models.
 
 ## Development setup
 
@@ -99,8 +104,18 @@ you are in the container, not directly in your host machine's shell. `root` is t
 
 Open the repository in VS Code and choose **Reopen in Container** (or **Dev Containers: Reopen in Container** from the Command Palette). The container is built from the [Dockerfile](Dockerfile), and the devcontainer's `postCreateCommand` installs `requirements.txt`. The configured default Python interpreter is `/usr/local/bin/python`, so a separate virtual environment is not required inside the container. Run the ingestion script from the project directory:
 
+Running the script without options fetches market prices only, so SEC output does not obscure the market-price run:
+
 ```bash
 python scripts/ingest_lakehouse.py
+```
+
+Choose a source explicitly when needed:
+
+```bash
+python scripts/ingest_lakehouse.py --source market
+python scripts/ingest_lakehouse.py --source sec
+python scripts/ingest_lakehouse.py --source both
 ```
 
 ### Running directly on your host (without the Dev Container)
@@ -115,13 +130,15 @@ python scripts/ingest_lakehouse.py
 
 The host virtual environment and the container's Python installation are separate environments. Installing packages in one does not install them in the other.
 
-The ingestion script retrieves SEC data over the network. Set `SEC_CONTACT_EMAIL` in the environment or in your local `.env` file so SEC requests include an identifiable User-Agent, for example:
+SEC requests (used by `--source sec` or `--source both`) require `SEC_CONTACT_EMAIL` in the environment or local `.env` file so requests include an identifiable User-Agent, for example:
 
 ```text
 SEC_CONTACT_EMAIL=you@example.com
 ```
 
-Do not commit your personal contact details or other local environment values.
+Market requests (used by `--source market` or `--source both`) require `ALPHA_VANTAGE_API_KEY` in the environment or local `.env` file. Alpha Vantage provides API keys through its [API key page](https://www.alphavantage.co/support/#api-key).
+
+Do not commit API keys, personal contact details, or other local environment values.
 
 ## Implementation status
 This repository is a developing data engineering and analytics workspace, not a finished business-facing application. Its objective is a guiding direction rather than a frozen specification: the data model, sources, tools, and analytical use cases can change as the project grows. Documentation should distinguish what is implemented now from what is planned or under consideration.
