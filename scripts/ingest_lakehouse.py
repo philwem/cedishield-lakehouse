@@ -1,7 +1,9 @@
 import os
 import requests
 import pandas as pd
+import yfinance as yf
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
@@ -87,8 +89,72 @@ def fetch_sec_facts(cik: str) -> pd.DataFrame:
         f"Successfully extracted {len(sec_df):,} flattened records for {entity_name}."
     )
     return sec_df
-    
-    
+
+
+
+
+MARKET_PRICE_COLUMNS = [
+    "market_date",
+    "ticker",
+    "open_price",
+    "high_price",
+    "low_price",
+    "close_price",
+    "volume",
+]
+
+
+def fetch_market_prices(
+    tickers: list[str], start_date: str = "2020-01-01"
+) -> pd.DataFrame:
+    """Fetch daily OHLCV data and return one row per ticker and market date."""
+    if not tickers or any(not ticker.strip() for ticker in tickers):
+        raise ValueError("At least one non-empty ticker symbol is required.")
+
+    print(f"Fetching market data for tickers: {tickers}...")
+    df = yf.download(tickers, start=start_date, group_by="ticker", auto_adjust=True)
+    if df.empty:
+        print("No market observations returned.")
+        return pd.DataFrame(columns=MARKET_PRICE_COLUMNS)
+
+    rows = []
+    for ticker in tickers:
+        if isinstance(df.columns, pd.MultiIndex):
+            matching_levels = [
+                level
+                for level in range(df.columns.nlevels)
+                if ticker in df.columns.get_level_values(level)
+            ]
+            if not matching_levels:
+                continue
+            ticker_df = df.xs(ticker, axis=1, level=matching_levels[0])
+        elif len(tickers) == 1:
+            ticker_df = df
+        else:
+            raise ValueError(
+                "Expected yfinance to return grouped columns for multiple tickers."
+            )
+
+        for date, row in ticker_df.iterrows():
+            rows.append(
+                {
+                    "market_date": date.strftime("%Y-%m-%d"),
+                    "ticker": ticker,
+                    "open_price": row.get("Open"),
+                    "high_price": row.get("High"),
+                    "low_price": row.get("Low"),
+                    "close_price": row.get("Close"),
+                    "volume": row.get("Volume"),
+                }
+            )
+
+    market_df = pd.DataFrame(rows, columns=MARKET_PRICE_COLUMNS)
+    market_df = market_df.dropna(subset=["close_price"])
+
+    print(f"Successfully fetched {len(market_df):,} market observation records.")
+    return market_df
+
+
 if __name__ == "__main__":
     # Test the function with Newmont Corporation's CIK
     df_sec = fetch_sec_facts("0001164727")
@@ -104,3 +170,8 @@ if __name__ == "__main__":
 
     print("\n--- SUMMARY STATS ---")
     print(f"Total rows extracted: {len(df_sec):,}")
+
+    # Test with Newmont stock and Gold futures
+    test_tickers = ["NEM", "GC=F"]
+    df_market = fetch_market_prices(test_tickers)
+    print(df_market.head())
