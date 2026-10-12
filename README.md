@@ -115,7 +115,13 @@ python scripts/ingest_lakehouse.py
 
 The host virtual environment and the container's Python installation are separate environments. Installing packages in one does not install them in the other.
 
-The ingestion script retrieves SEC data over the network and uses `load_dotenv()` to load environment variables from a `.env` file when present.
+The ingestion script retrieves SEC data over the network. Set `SEC_CONTACT_EMAIL` in the environment or in your local `.env` file so SEC requests include an identifiable User-Agent, for example:
+
+```text
+SEC_CONTACT_EMAIL=you@example.com
+```
+
+Do not commit your personal contact details or other local environment values.
 
 ## Implementation status
 This repository is a developing data engineering and analytics workspace, not a finished business-facing application. Its objective is a guiding direction rather than a frozen specification: the data model, sources, tools, and analytical use cases can change as the project grows. Documentation should distinguish what is implemented now from what is planned or under consideration.
