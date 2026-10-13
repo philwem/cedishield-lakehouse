@@ -1,0 +1,10 @@
+version: 2
+
+sources:
+  - name: cedishield_bronze
+    database: cedishield
+    schema: main
+    tables:
+      - name: bronze_market_prices
+      - name: bronze_sec_facts
+      - name: bronze_macro_indicators
